@@ -1,0 +1,31 @@
+created:
+    - database/factories/AccountTradeFactory.php
+    - database/factories/PositionFactory.php
+    - database/factories/MarketFactory.php
+    - database/factories/RiskToRewardFactory.php
+    - database/factories/LotSizeFactory.php
+    - database/factories/HitFactory.php
+    - database/factories/TransactionFactory.php
+    - database/migrations/2026_01_18_164001_create_account_trades_table.php
+    - database/migrations/2026_01_18_164002_create_positions_table.php
+    - database/migrations/2026_01_18_164003_create_markets_table.php
+    - database/migrations/2026_01_18_164004_create_risk_to_rewards_table.php
+    - database/migrations/2026_01_18_164005_create_lot_sizes_table.php
+    - database/migrations/2026_01_18_164006_create_hits_table.php
+    - database/migrations/2026_01_18_164007_create_transactions_table.php
+    - app/Models/AccountTrade.php
+    - app/Models/Position.php
+    - app/Models/Market.php
+    - app/Models/RiskToReward.php
+    - app/Models/LotSize.php
+    - app/Models/Hit.php
+    - app/Models/Transaction.php
+models:
+    User: {  }
+    AccountTrade: { name: string, balance: 'decimal:15,2', slug: 'string unique', softdeletes: softDeletes, timestamps: timestamps }
+    Position: { name: string, slug: 'string unique', timestamps: timestamps }
+    Market: { name: string, slug: 'string unique', timestamps: timestamps }
+    RiskToReward: { ratio: string, slug: 'string unique', timestamps: timestamps }
+    LotSize: { size: 'decimal:10,2', slug: 'string unique', timestamps: timestamps }
+    Hit: { name: string, slug: 'string unique', timestamps: timestamps }
+    Transaction: { account_trade_id: 'id foreign:account_trades', position_id: 'id foreign:positions', market_id: 'id foreign:markets', risk_to_reward_id: 'id foreign:risk_to_rewards', lot_size_id: 'id foreign:lot_sizes', hit_id: 'id foreign:hits', harga_entry: 'decimal:15,5', harga_sl: 'decimal:15,5', harga_tp: 'decimal:15,5', account_balance: 'decimal:15,2', profit_or_loss: 'decimal:15,2', equity: 'decimal:15,2', account_change: 'decimal:15,2', cummulative_account_change: 'decimal:15,2', screenshot_before: 'string nullable', screenshot_after: 'string nullable', reason: 'text nullable', softdeletes: softDeletes, timestamps: timestamps, relationships: { belongsTo: 'AccountTrade, Position, Market, RiskToReward, LotSize, Hit' } }

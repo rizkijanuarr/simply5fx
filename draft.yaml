@@ -1,0 +1,55 @@
+models:
+  AccountTrade:
+    name: string
+    balance: decimal:15,2  # gunakan decimal untuk uang
+    slug: string unique
+    softDeletes: true
+    timestamps: true
+
+  Position:
+    name: string  # Long/Short
+    slug: string unique
+    timestamps: true
+
+  Market:
+    name: string  # EUR/USD, Gold, dll
+    slug: string unique
+    timestamps: true
+
+  RiskToReward:
+    ratio: string  # 1:1, 1:2, 1:3
+    slug: string unique
+    timestamps: true
+
+  LotSize:
+    size: decimal:10,2  # 0.01, 0.1, 1.0
+    slug: string unique
+    timestamps: true
+
+  Hit:
+    name: string  # TP/SL hit
+    slug: string unique
+    timestamps: true
+
+  Transaction:
+    account_trade_id: id foreign:account_trades
+    position_id: id foreign:positions
+    market_id: id foreign:markets
+    risk_to_reward_id: id foreign:risk_to_rewards
+    lot_size_id: id foreign:lot_sizes
+    hit_id: id foreign:hits
+    harga_entry: decimal:15,5
+    harga_sl: decimal:15,5
+    harga_tp: decimal:15,5
+    account_balance: decimal:15,2
+    profit_or_loss: decimal:15,2
+    equity: decimal:15,2
+    account_change: decimal:15,2
+    cummulative_account_change: decimal:15,2
+    screenshot_before: string nullable
+    screenshot_after: string nullable
+    reason: text nullable
+    softDeletes: true
+    timestamps: true
+    relationships:
+      belongsTo: AccountTrade, Position, Market, RiskToReward, LotSize, Hit
