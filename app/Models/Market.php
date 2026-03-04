@@ -26,4 +26,6 @@ class Market extends Model
             'multiplier' => 'decimal:2',
         ];
     }
+
+
 }
