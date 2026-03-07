@@ -21,4 +21,26 @@ class EditTransaction extends EditRecord
     {
         return $this->getResource()::getUrl('index');
     }
+
+    /** Lock the form when HIT and Screenshot After are already filled */
+    protected function isLocked(): bool
+    {
+        $record = $this->getRecord();
+        return !empty($record->hit_id) && !empty($record->screenshot_after);
+    }
+
+    protected function getFormActions(): array
+    {
+        if ($this->isLocked()) {
+            return []; // Hide Save Changes button
+        }
+
+        return parent::getFormActions();
+    }
+
+    protected function mutateFormDataBeforeFill(array $data): array
+    {
+        // Disable all fields visually by passing a flag via the record
+        return $data;
+    }
 }

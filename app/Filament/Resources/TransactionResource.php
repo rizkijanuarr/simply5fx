@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\TransactionResource\Pages;
 use App\Filament\Resources\TransactionResource\RelationManagers;
 use App\Models\Transaction;
+use App\Services\GeminiService;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -94,8 +95,46 @@ class TransactionResource extends Resource
         return $form
             ->schema(function ($record) {
                 $isEditing = $record !== null;
+                $isLocked  = $isEditing && !empty($record->hit_id) && !empty($record->screenshot_after);
 
                 return [
+                    // CREATE banner
+                    Forms\Components\Placeholder::make('create_guide')
+                        ->label('')
+                        ->visible(!$isEditing)
+                        ->content(function (): \Illuminate\Support\HtmlString {
+                            $accountTradeUrl = \App\Filament\Resources\AccountTradeResource::getUrl('index');
+                            return new \Illuminate\Support\HtmlString(<<<HTML
+                                <div class="rounded-xl border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-300 space-y-2">
+                                    <div class="flex items-center gap-2 font-semibold text-blue-200 mb-1">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                        Panduan Mengisi Transaksi!
+                                    </div>
+                                    <div class="flex gap-2"><span class="text-blue-400 font-bold shrink-0">1.</span><span>Pilih <strong>Account Trade</strong>. Jika belum ada, <a href="{$accountTradeUrl}" class="underline text-blue-200 hover:text-white font-semibold">buat Account Trade terlebih dahulu di sini →</a></span></div>
+                                    <div class="flex gap-2"><span class="text-blue-400 font-bold shrink-0">2.</span><span>Upload <strong>Screenshot Before</strong> dari chart TradingView yang sudah ada posisi entry (BUY/SELL) — field harga, market, posisi, dan reason akan <strong>terisi otomatis</strong> oleh AI.</span></div>
+                                    <div class="flex gap-2"><span class="text-blue-400 font-bold shrink-0">3.</span><span>Periksa data, lalu tekan <strong>Submit</strong>.</span></div>
+                                </div>
+                            HTML);
+                        })
+                        ->columnSpanFull(),
+
+                    // EDIT banner
+                    Forms\Components\Placeholder::make('edit_guide')
+                        ->label('')
+                        ->visible($isEditing && !$isLocked)
+                        ->content(new \Illuminate\Support\HtmlString(<<<HTML
+                            <div class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300 space-y-2">
+                                <div class="flex items-center gap-2 font-semibold text-emerald-200 mb-1">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                    Selesaikan Transaksi Ini!
+                                </div>
+                                <div class="flex gap-2"><span class="text-emerald-400 font-bold shrink-0">1.</span><span>Upload <strong>Screenshot After</strong> — hasil akhir chart setelah trade selesai.</span></div>
+                                <div class="flex gap-2"><span class="text-emerald-400 font-bold shrink-0">2.</span><span>Pilih <strong>HIT</strong> — apakah trade mencapai TP atau SL.</span></div>
+                                <div class="flex gap-2"><span class="text-emerald-400 font-bold shrink-0">3.</span><span>Tekan <strong>Save Changes</strong>. Form akan terkunci setelah disimpan.</span></div>
+                            </div>
+                        HTML))
+                        ->columnSpanFull(),
+
                     // Fields for CREATE mode (disabled in EDIT mode)
                     Forms\Components\Select::make('account_trade_id')
                         ->relationship('accountTrade', 'name')
@@ -119,14 +158,6 @@ class TransactionResource extends Resource
                                 }
                             }
                         }),
-
-                    // Transaction Date - Always visible
-                    Forms\Components\DateTimePicker::make('transaction_date')
-                        ->label('Transaction Date & Time')
-                        ->seconds(false)
-                        ->default(now())
-                        ->disabled($isEditing)
-                        ->required(),
 
                     Forms\Components\Select::make('position_id')
                         ->relationship('position', 'name')
@@ -203,16 +234,88 @@ class TransactionResource extends Resource
                     Forms\Components\FileUpload::make('screenshot_before')
                         ->image()
                         ->disk('public')
+                        ->maxSize(1024)
                         ->directory('images/screenshot_before')
                         ->disabled($isEditing)
-                        ->dehydrated(),
+                        ->dehydrated()
+                        ->live()
+                        ->afterStateUpdated(function ($state, Forms\Set $set, Forms\Get $get) use ($isEditing) {
+                            if ($isEditing || empty($state)) {
+                                return;
+                            }
+                            // $state can be a TemporaryUploadedFile (Livewire temp) or array/string
+                            $file = is_array($state) ? reset($state) : $state;
+                            if ($file instanceof \Livewire\Features\SupportFileUploads\TemporaryUploadedFile) {
+                                $realPath = $file->getRealPath();
+                            } elseif (is_string($file)) {
+                                $realPath = $file;
+                            } else {
+                                return;
+                            }
+                            $prices = app(GeminiService::class)->extractPricesFromChart($realPath);
+                            if ($prices) {
+                                if (!empty($prices['entry']))             $set('harga_entry', $prices['entry']);
+                                if (!empty($prices['sl']))                $set('harga_sl', $prices['sl']);
+                                if (!empty($prices['tp']))                $set('harga_tp', $prices['tp']);
+                                if (!empty($prices['market_id']))         $set('market_id', $prices['market_id']);
+                                if (!empty($prices['position_id']))       $set('position_id', $prices['position_id']);
+                                if (!empty($prices['risk_to_reward_id'])) $set('risk_to_reward_id', $prices['risk_to_reward_id']);
+                                if (!empty($prices['reason']))            $set('reason', $prices['reason']);
+                                static::calculateProfitLossForCreate($set, $get);
+                            }
+                        }),
 
                     // Fields for EDIT mode only
                     Forms\Components\FileUpload::make('screenshot_after')
                         ->image()
                         ->disk('public')
+                        ->maxSize(1024)
                         ->directory('images/screenshot_after')
-                        ->visible($isEditing),
+                        ->visible($isEditing)
+                        ->disabled($isLocked),
+
+                    // Zoomable screenshot viewer (edit mode only)
+                    Forms\Components\Placeholder::make('screenshot_before_viewer')
+                        ->label('Screenshot Before (tap to zoom)')
+                        ->visible($isEditing && $record?->screenshot_before)
+                        ->content(function () use ($record): \Illuminate\Support\HtmlString {
+                            $url = asset('storage/' . $record->screenshot_before);
+                            $id = 'lightbox-before';
+                            return new \Illuminate\Support\HtmlString(<<<HTML
+                                <div>
+                                    <img src="{$url}" alt="Screenshot Before"
+                                        onclick="document.getElementById('{$id}').style.display='flex'"
+                                        class="w-full rounded-lg cursor-zoom-in object-contain max-h-80" />
+                                    <div id="{$id}"
+                                        onclick="this.style.display='none'"
+                                        style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9999;align-items:center;justify-content:center;cursor:zoom-out;">
+                                        <img src="{$url}" alt="Screenshot Before"
+                                            style="max-width:95vw;max-height:95vh;object-fit:contain;border-radius:8px;" />
+                                    </div>
+                                </div>
+                            HTML);
+                        }),
+
+                    Forms\Components\Placeholder::make('screenshot_after_viewer')
+                        ->label('Screenshot After (tap to zoom)')
+                        ->visible($isEditing && $record?->screenshot_after)
+                        ->content(function () use ($record): \Illuminate\Support\HtmlString {
+                            $url = asset('storage/' . $record->screenshot_after);
+                            $id = 'lightbox-after';
+                            return new \Illuminate\Support\HtmlString(<<<HTML
+                                <div>
+                                    <img src="{$url}" alt="Screenshot After"
+                                        onclick="document.getElementById('{$id}').style.display='flex'"
+                                        class="w-full rounded-lg cursor-zoom-in object-contain max-h-80" />
+                                    <div id="{$id}"
+                                        onclick="this.style.display='none'"
+                                        style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9999;align-items:center;justify-content:center;cursor:zoom-out;">
+                                        <img src="{$url}" alt="Screenshot After"
+                                            style="max-width:95vw;max-height:95vh;object-fit:contain;border-radius:8px;" />
+                                    </div>
+                                </div>
+                            HTML);
+                        }),
 
                     // Profit - Auto Calculated di CREATE, Disabled di EDIT
                     Forms\Components\TextInput::make('profit')
@@ -233,6 +336,7 @@ class TransactionResource extends Resource
                         ->label('Hit (TP/SL)')
                         ->relationship('hit', 'name')
                         ->visible($isEditing)
+                        ->disabled($isLocked)
                         ->reactive()
                         ->afterStateUpdated(function ($state, callable $set, callable $get) {
                             if (!$state) {
@@ -304,7 +408,35 @@ class TransactionResource extends Resource
                         ->helperText($isEditing ? 'New balance after WIN/LOSE' : 'Will be calculated when HIT is set'),
 
                     // Reason - Always editable
+                    Forms\Components\Placeholder::make('reason_preview')
+                        ->label('')
+                        ->visible($isEditing && !empty($record?->reason))
+                        ->content(function () use ($record): \Illuminate\Support\HtmlString {
+                            $lines = array_filter(array_map('trim', explode("\n", $record->reason ?? '')));
+                            $html = implode('', array_map(
+                                fn($line) => "<div class='flex gap-2 py-1'><span class='text-amber-400 mt-0.5'>•</span><span>" . e(ltrim($line, '-• ')) . "</span></div>",
+                                $lines
+                            ));
+                            return new \Illuminate\Support\HtmlString(
+                                "<div class='rounded-xl border border-amber-400/30 bg-amber-400/5 p-4 text-sm text-gray-200 leading-relaxed space-y-0.5'>{$html}</div>"
+                            );
+                        })
+                        ->columnSpanFull(),
+
                     Forms\Components\Textarea::make('reason')
+                        ->disabled($isLocked)
+                        ->columnSpanFull(),
+
+                    // Locked notice
+                    Forms\Components\Placeholder::make('locked_notice')
+                        ->label('')
+                        ->visible($isLocked)
+                        ->content(new \Illuminate\Support\HtmlString(
+                            "<div class='flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400'>"
+                            . "<svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4 shrink-0' fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z'/></svg>"
+                            . "<span>Transaksi ini sudah terkunci karena HIT dan Screenshot After sudah diisi.</span>"
+                            . "</div>"
+                        ))
                         ->columnSpanFull(),
                 ];
             });
@@ -354,7 +486,7 @@ class TransactionResource extends Resource
                         return "
                             <div class='space-y-1.5 py-1'>
                                 <div class='text-xs font-medium text-gray-600 dark:text-gray-400'>
-                                    {$record->sku} • {$record->accountTrade?->name} • {$record->transaction_date}
+                                    {$record->sku} • {$record->accountTrade?->name}
                                 </div>
                                 <div class='flex flex-wrap gap-1'>{$badgeHtml}</div>
                                 <div class='flex gap-3 text-[11px]'>
@@ -695,28 +827,6 @@ class TransactionResource extends Resource
                     ->searchable()
                     ->preload(),
 
-                Tables\Filters\Filter::make('transaction_date')
-                    ->form([
-                        Forms\Components\DatePicker::make('transaction_from')
-                            ->label('Transaction From')
-                            ->maxDate(fn (Forms\Get $get) => $get('transaction_until') ?: now())
-                            ->native(false),
-                        Forms\Components\DatePicker::make('transaction_until')
-                            ->label('Transaction Until')
-                            ->native(false)
-                            ->maxDate(now()),
-                    ])
-                    ->query(function (Builder $query, array $data): Builder {
-                        return $query
-                            ->when(
-                                $data['transaction_from'],
-                                fn (Builder $query, $date): Builder => $query->whereDate('transaction_date', '>=', $date),
-                            )
-                            ->when(
-                                $data['transaction_until'],
-                                fn (Builder $query, $date): Builder => $query->whereDate('transaction_date', '<=', $date),
-                            );
-                    }),
             ])
             ->actions([
                 Tables\Actions\ActionGroup::make([

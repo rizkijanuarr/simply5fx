@@ -24,7 +24,7 @@ class TransactionStats extends BaseWidget
 
         // Query transactions with filters
         $transactionsQuery = Transaction::query()
-            ->whereBetween('transaction_date', [$startDate, $endDate])
+            ->whereBetween('created_at', [$startDate, $endDate])
             ->when($accountId, fn ($query) => $query->where('account_trade_id', $accountId));
 
         $transactions = $transactionsQuery->with('hit')->get();
@@ -46,7 +46,7 @@ class TransactionStats extends BaseWidget
             ? 1 
             : AccountTrade::query()
                 ->whereHas('transactions', function ($query) use ($startDate, $endDate) {
-                    $query->whereBetween('transaction_date', [$startDate, $endDate]);
+                    $query->whereBetween('created_at', [$startDate, $endDate]);
                 })
                 ->count();
 

@@ -43,7 +43,7 @@ class ProfitChart extends ChartWidget
         $profitValues = [];
         foreach ($data as $value) {
             $dayTransactions = Transaction::query()
-                ->whereDate('transaction_date', $value->date)
+                ->whereDate('created_at', $value->date)
                 ->whereNotNull('hit_id')
                 ->whereHas('hit', function ($q) {
                     $q->whereRaw('UPPER(name) IN (?, ?)', ['WIN', 'TP']);
