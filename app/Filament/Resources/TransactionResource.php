@@ -203,8 +203,6 @@ class TransactionResource extends Resource
                     Forms\Components\FileUpload::make('screenshot_before')
                         ->image()
                         ->disk('public')
-                        ->maxSize(1024)
-                        ->imageCropAspectRatio('1:1')
                         ->directory('images/screenshot_before')
                         ->disabled($isEditing)
                         ->dehydrated(),
@@ -213,8 +211,6 @@ class TransactionResource extends Resource
                     Forms\Components\FileUpload::make('screenshot_after')
                         ->image()
                         ->disk('public')
-                        ->maxSize(1024)
-                        ->imageCropAspectRatio('1:1')
                         ->directory('images/screenshot_after')
                         ->visible($isEditing),
 
