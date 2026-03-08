@@ -43,23 +43,32 @@ class GeminiService
         $availableMarkets = Market::pluck('name')->implode(', ');
 
         $prompt = <<<PROMPT
-This is a trading chart image (e.g. TradingView). Analyze it carefully.
+This is a trading chart image from TradingView. The user has drawn a RED annotation on the chart.
 
-Extract the following information:
+**YOUR #1 TASK — READ THE RED PRICE TAG:**
+- Find the RED price tag label on the chart. It will be accompanied by a red text label saying "HARGA ENTRY" (or similar Indonesian text meaning "Entry Price").
+- The red price tag shows the exact entry price. Read it precisely.
+- The price format on this chart uses INDONESIAN number formatting:
+  - The DOT (.) is a THOUSANDS separator (like a comma in English)
+  - The COMMA (,) is the DECIMAL separator (like a dot in English)
+  - Example: "5.122,154" means 5122.154 (five thousand one hundred twenty-two point one five four)
+  - Example: "2.608,010" means 2608.010
+- Convert the price to standard decimal format (e.g., 5122.154, 2608.01)
 
-1. **entry**: The entry price label (middle price between TP and SL zones)
-2. **sl**: The Stop Loss price (in the red/pink zone)
-3. **tp**: The Take Profit price (in the green zone)
-4. **symbol**: The trading symbol shown in the chart header (e.g. "XAUUSD", "GBPUSD", "EURUSD", "BTCUSD"). Match to one of: {$availableMarkets}
-5. **position**: "BUY" if TP is above entry (long trade), "SELL" if TP is below entry (short trade)
-6. **reason**: Tulis alasan trading dalam Bahasa Indonesia, format poin-poin singkat (bullet points dengan "-"). Minimum 100 kata, maksimum 200 kata. Analisis berdasarkan gambar: zona entry, arah harga, level support/resistance yang terlihat, pola candlestick, dan risk/reward. Jangan gunakan kata "Gemini" atau "AI".
+**Extract:**
+1. **entry**: The price shown in the RED price tag near the "HARGA ENTRY" label. Return as standard decimal number (e.g. 5122.154, NOT "5.122,154" string format)
+2. **symbol**: The trading symbol in the top-left chart header (e.g. "XAUUSD", "GBPUSD", "EURUSD"). Match to one of: {$availableMarkets}
+3. **position**: "BUY" if this is a bullish/long trade setup (price going up), "SELL" if bearish/short (price going down). Determine from context: zone labels, arrow direction, or candle position relative to entry.
+4. **reason**: Tulis alasan trading dalam Bahasa Indonesia, format poin-poin singkat (bullet points dengan "-"). Minimum 100 kata, maksimum 200 kata. Analisis: zona entry yang ditandai, arah harga, level support/resistance, struktur pasar. Jangan gunakan kata "Gemini" atau "AI".
 
-Return ONLY a valid JSON object, no explanation:
-{"entry": 2608.01, "sl": 2602.35, "tp": 2631.42, "symbol": "XAU/USD", "position": "BUY", "reason": "- Harga berada di zona support...\n- ..."}
+Return ONLY a valid JSON object:
+{"entry": 5122.154, "symbol": "XAU/USD", "position": "BUY", "reason": "- Harga berada di zona demand...\n- ..."}
 
 Rules:
-- For symbol: normalize format to include "/" (e.g. XAUUSD → XAU/USD, GBPUSD → GBP/USD)
-- If you cannot determine a value, use null for that key
+- entry must be a number (float), NOT a string with dots/commas
+- For XAU/USD: entry price is always > 1000
+- sl and tp will be calculated automatically — do NOT include them
+- If you cannot find the red price tag, use null for entry
 PROMPT;
 
         try {
@@ -101,9 +110,39 @@ PROMPT;
                 return null;
             }
 
-            $entry = isset($data['entry']) ? (float) $data['entry'] : null;
-            $sl    = isset($data['sl'])    ? (float) $data['sl']    : null;
-            $tp    = isset($data['tp'])    ? (float) $data['tp']    : null;
+            // Log raw Gemini response for debugging
+            Log::info('GeminiService: raw response', ['entry' => $data['entry'] ?? null, 'symbol' => $data['symbol'] ?? null, 'position' => $data['position'] ?? null]);
+
+            // Parse entry — handle Indonesian format "5.122,154" → 5122.154
+            $rawEntry = $data['entry'] ?? null;
+            if (is_string($rawEntry)) {
+                // Indonesian format: dots=thousands, comma=decimal → "5.122,154" → "5122.154"
+                $rawEntry = str_replace('.', '', $rawEntry); // remove thousand separators
+                $rawEntry = str_replace(',', '.', $rawEntry); // convert decimal comma to dot
+            }
+            $entry = $rawEntry !== null ? (float) $rawEntry : null;
+
+            // Sanity check: entry price must be realistic (> 100 for any forex/gold/crypto)
+            if ($entry !== null && $entry < 100) {
+                Log::warning('GeminiService: entry price too low, likely misread', ['entry' => $entry]);
+                return null;
+            }
+
+            // Auto-detect position direction (from Gemini, no sl/tp from chart needed)
+            $positionName = $data['position'] ?? null;
+            $isBuy = strtoupper($positionName ?? 'BUY') === 'BUY';
+
+            // === FIXED RISK MANAGEMENT: Risk=$10, RR=1:3, Lot=0.01 ===
+            // Formula: Risk = SL_distance × Lot × Multiplier
+            // $10 = SL_distance × 0.01 × 100  →  SL_distance = $10
+            // TP_distance = SL_distance × 3 = $30
+            if ($entry !== null) {
+                $slDistance = 10.0;  // $10 risk
+                $tpDistance = 30.0;  // $30 reward (1:3 RR)
+
+                $sl = $isBuy ? $entry - $slDistance : $entry + $slDistance;
+                $tp = $isBuy ? $entry + $tpDistance : $entry - $tpDistance;
+            }
 
             $result = [
                 'entry' => $entry !== null ? $this->toFormInteger($entry) : null,
@@ -117,23 +156,18 @@ PROMPT;
                 $result['market_id'] = $market?->id;
             }
 
-            // Auto-detect position_id from data or prices
-            $positionName = $data['position'] ?? null;
-            if (!$positionName && $entry !== null && $tp !== null) {
-                $positionName = $tp > $entry ? 'BUY' : 'SELL';
-            }
+            // Position
             if ($positionName) {
                 $position = Position::whereRaw('UPPER(name) = ?', [strtoupper($positionName)])->first();
                 $result['position_id'] = $position?->id;
             }
 
-            // Auto-calculate risk_to_reward_id
-            if ($entry !== null && $sl !== null && $tp !== null && abs($entry - $sl) > 0) {
-                $rr = round(abs($tp - $entry) / abs($entry - $sl));
-                $rrRatio = "1:{$rr}";
-                $rrModel = RiskToReward::where('ratio', $rrRatio)->first();
-                $result['risk_to_reward_id'] = $rrModel?->id;
-            }
+            // Fixed RR = 1:3
+            $rrModel = RiskToReward::where('ratio', '1:3')->first();
+            $result['risk_to_reward_id'] = $rrModel?->id;
+
+            // Fixed lot size = 0.01 (id: 1)
+            $result['lot_size_id'] = \App\Models\LotSize::where('size', '0.01')->value('id');
 
             // Reason from Gemini analysis
             if (!empty($data['reason'])) {

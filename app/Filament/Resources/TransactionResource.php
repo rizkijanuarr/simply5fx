@@ -260,6 +260,7 @@ class TransactionResource extends Resource
                                 if (!empty($prices['market_id']))         $set('market_id', $prices['market_id']);
                                 if (!empty($prices['position_id']))       $set('position_id', $prices['position_id']);
                                 if (!empty($prices['risk_to_reward_id'])) $set('risk_to_reward_id', $prices['risk_to_reward_id']);
+                                if (!empty($prices['lot_size_id']))       $set('lot_size_id', $prices['lot_size_id']);
                                 if (!empty($prices['reason']))            $set('reason', $prices['reason']);
                                 static::calculateProfitLossForCreate($set, $get);
                             }
